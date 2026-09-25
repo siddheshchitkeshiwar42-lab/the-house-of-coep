@@ -1,0 +1,14 @@
+{
+  "name": "coep-merchandise-root",
+  "private": true,
+  "workspaces": [
+    "Merchantise"
+  ],
+  "scripts": {
+    "postinstall": "npm --prefix Merchantise install",
+    "prebuild": "npm --prefix Merchantise install",
+    "dev": "npm --prefix Merchantise run dev",
+    "build": "npm --prefix Merchantise run build",
+    "preview": "npm --prefix Merchantise run preview"
+  }
+}
