@@ -10,6 +10,7 @@ import { Cart } from './pages/Cart';
 import { Checkout } from './pages/Checkout';
 import { Payment } from './pages/Payment';
 import { OrderSuccess } from './pages/OrderSuccess';
+import { PaymentReturn } from './pages/PaymentReturn';
 import { CheckCircle2, Heart, Info } from 'lucide-react';
 import './index.css';
 
@@ -45,6 +46,7 @@ function App() {
           <Route path="/checkout" element={<Checkout />} />
           <Route path="/payment/:orderId" element={<Payment />} />
           <Route path="/payment" element={<Payment />} />
+          <Route path="/payment-return" element={<PaymentReturn />} />
           <Route path="/order-success/:orderId" element={<OrderSuccess />} />
           <Route path="/order-success" element={<OrderSuccess />} />
           <Route path="*" element={<Home />} />

@@ -305,6 +305,9 @@ export const CartProvider = ({ children }) => {
         totalAmount: orderData.totalAmount || 0,
         paymentStatus: 'PAID',
         transactionId: orderData.paymentRef || 'N/A',
+        paymentGateway: orderData.paymentGateway || 'Cashfree',
+        paymentMethod: orderData.paymentMethod || 'N/A',
+        paidAt: orderData.paidAt || new Date().toISOString(),
         orderStatus: 'New',
         upiId: PAYMENT_CONFIG.UPI_ID
       };

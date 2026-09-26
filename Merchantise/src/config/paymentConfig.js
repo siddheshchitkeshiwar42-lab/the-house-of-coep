@@ -1,10 +1,15 @@
 /**
  * COEP Merchandise Store — Production Payment Gateway Configuration
  * 
+ * Powered by Cashfree Payments
+ * 
  * Supports:
- * 1. Primary "PAY NOW" Gateway (Razorpay / Cashfree / Custom API)
+ * 1. Primary "PAY NOW" Gateway (Cashfree Hosted Checkout — UPI, Cards, Net Banking, Wallets)
  * 2. Secondary Dynamic UPI QR Fallback
  * 3. Immutable Security Guards against Client-Side Tampering
+ * 
+ * NOTE: Cashfree Secret Key is NEVER exposed to the frontend.
+ * All order creation happens via the backend Netlify function.
  */
 
 // Fallback encoded values (Base64) to prevent raw plaintext exposure
@@ -33,11 +38,6 @@ const RESOLVED_PAYEE_NAME = (
   decodeSafe(_ENC_FALLBACK_NAME, 'COEP Merchandise Store')
 ).trim();
 
-const RESOLVED_RAZORPAY_KEY = (
-  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_RAZORPAY_KEY_ID) ||
-  'rzp_test_coep_merch_2026'
-).trim();
-
 const RESOLVED_API_URL = (
   (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_URL) ||
   ''
@@ -53,20 +53,30 @@ const RESOLVED_WHATSAPP_LINK = (
   'https://chat.whatsapp.com/IkHmg9bk8bi0aeW9s0Evid'
 ).trim();
 
+// Cashfree environment: 'sandbox' for testing, 'production' for live
+const RESOLVED_CASHFREE_ENV = (
+  (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_CASHFREE_ENV) ||
+  'production'
+).trim();
+
 /**
- * Dynamically loads Razorpay checkout SDK script
+ * Dynamically loads Cashfree Payments JS SDK
+ * Uses the Cashfree hosted checkout (Drop-in) for PCI-DSS compliance
  */
-export const loadRazorpaySDK = () => {
+export const loadCashfreeSDK = () => {
   return new Promise((resolve) => {
     if (typeof window === 'undefined') return resolve(false);
-    if (window.Razorpay) return resolve(true);
+    if (window.Cashfree) return resolve(true);
 
     const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.src = 'https://sdk.cashfree.com/js/v3/cashfree.js';
     script.async = true;
-    script.onload = () => resolve(true);
+    script.onload = () => {
+      console.log('Cashfree JS SDK loaded successfully');
+      resolve(true);
+    };
     script.onerror = () => {
-      console.warn('Could not load Razorpay SDK from CDN, using secure built-in gateway checkout.');
+      console.warn('Could not load Cashfree SDK from CDN.');
       resolve(false);
     };
     document.body.appendChild(script);
@@ -74,11 +84,27 @@ export const loadRazorpaySDK = () => {
 };
 
 /**
+ * Initializes a Cashfree instance for checkout
+ * @returns {Object|null} Cashfree checkout instance
+ */
+export const initCashfree = () => {
+  if (typeof window === 'undefined' || !window.Cashfree) return null;
+  try {
+    return window.Cashfree({
+      mode: RESOLVED_CASHFREE_ENV === 'production' ? 'production' : 'sandbox'
+    });
+  } catch (err) {
+    console.error('Failed to initialize Cashfree:', err);
+    return null;
+  }
+};
+
+/**
  * Immutable Payment Configuration Object (Locked against DevTools / DOM tampering)
  */
 export const PAYMENT_CONFIG = Object.freeze({
-  GATEWAY_NAME: 'Razorpay / Cashfree / Official UPI Gateway',
-  RAZORPAY_KEY_ID: RESOLVED_RAZORPAY_KEY,
+  GATEWAY_NAME: 'Cashfree Payments',
+  CASHFREE_ENV: RESOLVED_CASHFREE_ENV,
   API_URL: RESOLVED_API_URL,
   UPI_ID: RESOLVED_UPI_ID,
   PAYEE_NAME: RESOLVED_PAYEE_NAME,

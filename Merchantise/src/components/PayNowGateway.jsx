@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { formatCurrency } from '../utils/formatCurrency';
-import { PAYMENT_CONFIG, loadRazorpaySDK } from '../config/paymentConfig';
+import { PAYMENT_CONFIG, loadCashfreeSDK, initCashfree } from '../config/paymentConfig';
 import { PaymentQR } from './PaymentQR';
 import {
   CreditCard,
@@ -71,8 +71,58 @@ export const PayNowGateway = ({
   ];
 
   /**
+   * Verifies payment status with the backend after Cashfree checkout completes.
+   * Backend calls Cashfree API using the secret key (never exposed to frontend).
+  const callBackendApi = async (endpoint, body) => {
+    const urls = [
+      `/api/${endpoint}`,
+      `/.netlify/functions/${endpoint}`
+    ];
+    let lastError = null;
+
+    for (const url of urls) {
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+
+        const text = await res.text();
+        if (!text || text.trim().startsWith('<')) {
+          continue; // Received HTML (SPA fallback), try next endpoint
+        }
+
+        const data = JSON.parse(text);
+        return data;
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError || new Error(`Failed to connect to /api/${endpoint}`);
+  };
+
+  /**
+   * Verifies payment status with the backend after Cashfree checkout completes.
+   * Backend calls Cashfree API using the secret key (never exposed to frontend).
+   */
+  const verifyPaymentWithBackend = async (cfOrderId) => {
+    try {
+      const data = await callBackendApi('verify-payment', { order_id: cfOrderId });
+      return data;
+    } catch (err) {
+      console.error('Payment verification request failed:', err);
+      return { verified: false, error: err.message };
+    }
+  };
+
+  /**
    * Main "PAY NOW" Action Handler
-   * Triggers Razorpay Checkout SDK or gateway session
+   * 1. Creates a Cashfree order via backend → gets payment_session_id
+   * 2. Opens Cashfree hosted checkout (modal with UPI, Cards, Net Banking, Wallets)
+   * 3. Verifies payment with backend after checkout completes
+   * 4. Triggers receipt + Google Sheets via onPaymentSuccess callback
    */
   const handlePayNow = async () => {
     setIsProcessing(true);
@@ -80,101 +130,137 @@ export const PayNowGateway = ({
     setErrorMessage('');
 
     try {
-      // 1. Check if backend API endpoint exists for gateway order creation
-      if (PAYMENT_CONFIG.API_URL) {
-        try {
-          const res = await fetch(`${PAYMENT_CONFIG.API_URL}/payments/create-order`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ orderId, amount, customer, items })
-          });
-          const data = await res.json();
-          if (data && data.gatewayOrderId) {
-            console.log('Gateway order created from API:', data);
-          }
-        } catch (apiErr) {
-          console.warn('Backend API not responding, fallback to direct gateway integration:', apiErr);
-        }
+      // ============================================================
+      // STEP 1: Create Cashfree order via backend (secret key stays server-side)
+      // ============================================================
+      console.log('[PayNow] Creating Cashfree order for:', orderId, '| Amount:', amount);
+
+      const orderData = await callBackendApi('create-order', { orderId, amount, customer, items });
+
+      if (!orderData || !orderData.success || !orderData.payment_session_id) {
+        throw new Error(orderData?.error || orderData?.details || 'Failed to create payment order. Please retry.');
       }
 
-      // 2. Load Razorpay Checkout SDK dynamically
-      const isSdkLoaded = await loadRazorpaySDK();
+      console.log('[PayNow] Cashfree order created:', orderData.order_id, '| Session ID received');
 
-      if (isSdkLoaded && window.Razorpay && PAYMENT_CONFIG.RAZORPAY_KEY_ID && !PAYMENT_CONFIG.RAZORPAY_KEY_ID.includes('test_coep_merch')) {
-        // Production Razorpay Gateway Flow
-        const options = {
-          key: PAYMENT_CONFIG.RAZORPAY_KEY_ID,
-          amount: Math.round(Number(amount) * 100), // Amount in paise
-          currency: 'INR',
-          name: PAYMENT_CONFIG.PAYEE_NAME,
-          description: `Order #${orderId} - COEP Merchandise`,
-          image: '/image.png',
-          prefill: {
-            name: customer.fullName || customer.name || 'COEP Student',
-            email: customer.email || 'student@coep.ac.in',
-            contact: customer.phone || customer.mobile || '9876543210'
-          },
-          theme: {
-            color: '#1557B0'
-          },
-          handler: function (response) {
-            setPaymentStatus('verifying');
-            const paymentRef = response.razorpay_payment_id || `RZP-${Date.now()}`;
-            setTimeout(() => {
-              setPaymentStatus('success');
-              if (onPaymentSuccess) {
-                onPaymentSuccess({
-                  transactionRef: paymentRef,
-                  gateway: 'Razorpay',
-                  method: selectedMethod.toUpperCase(),
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_order_id: response.razorpay_order_id,
-                  razorpay_signature: response.razorpay_signature
-                });
-              }
-            }, 1000);
-          },
-          modal: {
-            ondismiss: function () {
-              setIsProcessing(false);
-              setPaymentStatus('idle');
-            }
-          }
-        };
+      // ============================================================
+      // STEP 2: Load Cashfree JS SDK and initialize
+      // ============================================================
+      const isSdkLoaded = await loadCashfreeSDK();
 
-        const rzp = new window.Razorpay(options);
-        rzp.on('payment.failed', function (response) {
+      if (!isSdkLoaded || !window.Cashfree) {
+        throw new Error('Payment gateway could not be loaded. Please check your internet connection and retry.');
+      }
+
+      const cashfree = initCashfree();
+
+      if (!cashfree) {
+        throw new Error('Payment gateway initialization failed. Please retry.');
+      }
+
+      console.log('[PayNow] Opening Cashfree hosted checkout...');
+
+      // ============================================================
+      // STEP 3: Open Cashfree Hosted Checkout
+      // On approved production domain (thehouseofcoep.netlify.app),
+      // opens the sleek popup modal directly on the page.
+      // On localhost, uses _self redirect so local testing works seamlessly.
+      // ============================================================
+      const isApprovedDomain = window.location.hostname.includes('thehouseofcoep.netlify.app');
+      const checkoutResult = await cashfree.checkout({
+        paymentSessionId: orderData.payment_session_id,
+        redirectTarget: isApprovedDomain ? '_modal' : '_self'
+      });
+
+      console.log('[PayNow] Checkout result:', checkoutResult);
+
+      // ============================================================
+      // STEP 4: Handle checkout result
+      // ============================================================
+
+      // Case A: Checkout error or user dismissed
+      if (checkoutResult.error) {
+        console.warn('[PayNow] Checkout error/dismiss:', checkoutResult.error);
+
+        // User closed modal without paying
+        if (
+          checkoutResult.error?.message?.toLowerCase().includes('user') ||
+          checkoutResult.error?.message?.toLowerCase().includes('cancel') ||
+          checkoutResult.error?.message?.toLowerCase().includes('dismiss') ||
+          checkoutResult.error?.message?.toLowerCase().includes('close') ||
+          checkoutResult.error?.code === 'USER_CANCELLED'
+        ) {
           setIsProcessing(false);
-          setPaymentStatus('failed');
-          setErrorMessage(response.error?.description || 'Payment was declined by your bank.');
-          if (onPaymentFailure) onPaymentFailure(response.error);
-        });
-        rzp.open();
+          setPaymentStatus('idle');
+          return;
+        }
+
+        // Payment failed (declined, insufficient balance, etc.)
+        setIsProcessing(false);
+        setPaymentStatus('failed');
+        setErrorMessage(checkoutResult.error.message || 'Payment was declined or cancelled.');
+        if (onPaymentFailure) onPaymentFailure(checkoutResult.error);
         return;
       }
 
-      // 3. High-Fidelity Gateway Checkout Simulation / Direct Flow
-      // For development, testing, or custom deployments without live Razorpay secret keys
-      setTimeout(() => {
-        setPaymentStatus('verifying');
-        setTimeout(() => {
-          setPaymentStatus('success');
-          const generatedRef = `TXN-${selectedMethod.toUpperCase()}-${Math.floor(100000000000 + Math.random() * 900000000000)}`;
-          if (onPaymentSuccess) {
-            onPaymentSuccess({
-              transactionRef: generatedRef,
-              gateway: 'COEP Secure Gateway (Instant UPI / Cards)',
-              method: selectedMethod.toUpperCase()
-            });
-          }
-        }, 1500);
-      }, 1200);
+      // Case B: Redirect-based payment (3DS, Net Banking)
+      if (checkoutResult.redirect) {
+        console.log('[PayNow] Redirected for additional authentication');
+        // The return_url will handle post-payment verification on /payment-return
+        return;
+      }
+
+      // Case C: Payment completed in modal — verify with backend
+      setPaymentStatus('verifying');
+      console.log('[PayNow] Verifying payment with backend...');
+
+      // Small delay to ensure Cashfree has processed the payment
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      const verificationResult = await verifyPaymentWithBackend(orderData.order_id);
+      console.log('[PayNow] Verification result:', verificationResult);
+
+      if (verificationResult.verified) {
+        // ============================================================
+        // STEP 5: Payment SUCCESS — trigger receipt + Google Sheets
+        // ============================================================
+        setPaymentStatus('success');
+        console.log('[PayNow] ✅ Payment VERIFIED for order:', orderData.order_id);
+
+        if (onPaymentSuccess) {
+          onPaymentSuccess({
+            transactionRef: verificationResult.payment?.cf_payment_id 
+              || verificationResult.payment?.bank_reference 
+              || `CF-${orderData.cf_order_id}`,
+            gateway: 'Cashfree',
+            method: verificationResult.payment?.payment_method?.toUpperCase() 
+              || selectedMethod.toUpperCase(),
+            cf_order_id: orderData.cf_order_id,
+            order_id: orderData.order_id,
+            payment_amount: verificationResult.order_amount,
+            bank_reference: verificationResult.payment?.bank_reference,
+            payment_time: verificationResult.payment?.payment_time
+          });
+        }
+      } else {
+        // ============================================================
+        // Verification failed — maybe payment is still processing
+        // ============================================================
+        setPaymentStatus('failed');
+        setErrorMessage(
+          verificationResult.message || 
+          'Payment verification pending. If amount was deducted, it will be auto-verified or refunded within 24 hours.'
+        );
+        if (onPaymentFailure) {
+          onPaymentFailure({ description: verificationResult.message || 'Payment verification failed' });
+        }
+      }
 
     } catch (err) {
-      console.error('Payment initiation error:', err);
+      console.error('[PayNow] Error:', err);
       setIsProcessing(false);
       setPaymentStatus('failed');
-      setErrorMessage('Unable to initialize payment gateway. Please retry or use UPI QR.');
+      setErrorMessage(err.message || 'Unable to initialize payment gateway. Please retry or use UPI QR.');
     }
   };
 
