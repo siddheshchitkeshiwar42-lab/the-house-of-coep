@@ -4,7 +4,7 @@ const https = require('https');
 // ============================================================================
 // CASHFREE CREDENTIALS — SERVER-SIDE ONLY
 // ============================================================================
-const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || '14438183e4274efff14131b1d6e8183441';
+const CASHFREE_CLIENT_ID = process.env.CASHFREE_CLIENT_ID || '';
 const CASHFREE_CLIENT_SECRET = process.env.CASHFREE_CLIENT_SECRET || '';
 const CASHFREE_ENV = process.env.CASHFREE_ENV || 'production';
 

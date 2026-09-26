@@ -30,7 +30,7 @@ function cashfreeDevPlugin() {
                 const customer = body.customer || {}
 
                 const env = loadEnv('development', process.cwd(), '')
-                const clientId = env.CASHFREE_CLIENT_ID || process.env.CASHFREE_CLIENT_ID || '14438183e4274efff14131b1d6e8183441'
+                const clientId = env.CASHFREE_CLIENT_ID || process.env.CASHFREE_CLIENT_ID || ''
                 const clientSecret = env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_CLIENT_SECRET || ''
                 const cfEnv = env.CASHFREE_ENV || process.env.CASHFREE_ENV || 'production'
                 const apiHost = cfEnv === 'production' ? 'api.cashfree.com' : 'sandbox.cashfree.com'
@@ -134,7 +134,7 @@ function cashfreeDevPlugin() {
                 const body = JSON.parse(bodyStr || '{}')
                 const { order_id } = body
                 const env = loadEnv('development', process.cwd(), '')
-                const clientId = env.CASHFREE_CLIENT_ID || process.env.CASHFREE_CLIENT_ID || '14438183e4274efff14131b1d6e8183441'
+                const clientId = env.CASHFREE_CLIENT_ID || process.env.CASHFREE_CLIENT_ID || ''
                 const clientSecret = env.CASHFREE_CLIENT_SECRET || process.env.CASHFREE_CLIENT_SECRET || ''
                 const cfEnv = env.CASHFREE_ENV || process.env.CASHFREE_ENV || 'production'
                 const apiHost = cfEnv === 'production' ? 'api.cashfree.com' : 'sandbox.cashfree.com'
