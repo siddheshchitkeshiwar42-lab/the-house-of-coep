@@ -71,8 +71,8 @@ export const PayNowGateway = ({
   ];
 
   /**
-   * Verifies payment status with the backend after Cashfree checkout completes.
-   * Backend calls Cashfree API using the secret key (never exposed to frontend).
+   * Calls the backend API with fallback across endpoints.
+   */
   const callBackendApi = async (endpoint, body) => {
     const urls = [
       `/api/${endpoint}`,
